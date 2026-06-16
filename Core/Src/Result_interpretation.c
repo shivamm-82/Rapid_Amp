@@ -271,22 +271,23 @@ void PCR_OnMinuteTick(uint8_t minute)
         prv_calculate_baseline();
 
     /* Early positive check up to current minute */
-    for (uint8_t ch = 0; ch < NUM_CHANNELS; ch++)
-    {
-        if (s_results[ch].done) continue;   /* already called, skip */
-
-        int8_t tt = prv_detect_Tt(ch, minute);
-
-        if (tt > 0)
-        {
-            s_results[ch].Tt         = tt;
-            s_results[ch].result     = RESULT_POSITIVE;
-            s_results[ch].end_signal = s_wells[ch]->Buff[minute];
-            s_results[ch].fold_rise  = (float)s_wells[ch]->Buff[minute]
-                                       / fmaxf(s_baseline_mean[ch], 1.0f);
-            s_results[ch].done       = true;
-        }
-    }
+//    for (uint8_t ch = 0; ch < NUM_CHANNELS; ch++)
+//    {
+//        if (s_results[ch].done) continue;   /* already called, skip */
+//
+//        int8_t tt = prv_detect_Tt(ch, minute);
+//
+//        if (tt > 0)
+//        {
+//            s_results[ch].Tt         = tt;
+//            s_results[ch].result     = RESULT_POSITIVE;
+//            s_results[ch].end_signal = s_wells[ch]->Buff[minute];
+//            s_results[ch].fold_rise  = (float)s_wells[ch]->Buff[minute]
+//                                       / fmaxf(s_baseline_mean[ch], 1.0f);
+//            s_results[ch].done       = true;
+//        }
+//
+//    }
 
     /* Last minute → run full final analysis */
     if(minute == (SIZE_OF_PHOTO_DATA_CAPTURE - 1u))

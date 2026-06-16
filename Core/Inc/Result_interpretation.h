@@ -12,13 +12,13 @@ extern "C" {
 /* ─────────────────────────────────────────────
  * USER CONFIGURATION — adjust to your assay
  * ───────────────────────────────────────────── */
-#define SIZE_OF_PHOTO_DATA_CAPTURE   30u    /* total readings per well        */
+#define SIZE_OF_PHOTO_DATA_CAPTURE   28u    /* total readings per well        */
 #define NUM_CHANNELS                  7u    /* number of wells                */
-#define IC_CHANNEL_INDEX              6u    /* WELL_7 = Internal Control      */
+#define IC_CHANNEL_INDEX              3u    /* WELL_7 = Internal Control      */
 
-#define BASELINE_POINTS               5u    /* first N readings for baseline  */
+#define BASELINE_POINTS               5u //previusly 5 was here   /* first N readings for baseline  */
 #define THRESHOLD_MULTIPLIER         10.0f  /* mean + N * SD                  */
-#define MIN_THRESHOLD_DELTA         200.0f  /* absolute minimum rise (counts) */
+#define MIN_THRESHOLD_DELTA         100.0f  /* absolute minimum rise (counts) */
 #define CONSECUTIVE_REQUIRED          3u    /* N points above threshold → +ve */
 #define TT_VALID_MIN                  4u    /* earliest valid Tt (minutes)    */
 #define TT_VALID_MAX                 28u    /* latest  valid Tt (minutes)     */

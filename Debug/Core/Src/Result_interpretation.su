@@ -1,0 +1,14 @@
+../Core/Src/Result_interpretation.c:55:14:PCR_GetFinalRunResult	24	static
+../Core/Src/Result_interpretation.c:153:13:prv_calculate_baseline	48	static
+../Core/Src/Result_interpretation.c:192:15:prv_detect_Tt	32	static
+../Core/Src/Result_interpretation.c:229:13:prv_apply_IC_gating	16	static
+../Core/Src/Result_interpretation.c:250:6:PCR_Init	24	static
+../Core/Src/Result_interpretation.c:263:6:PCR_OnMinuteTick	32	static
+../Core/Src/Result_interpretation.c:300:6:PCR_FinalResults	24	static
+../Core/Src/Result_interpretation.c:326:20:PCR_GetResult	16	static
+../Core/Src/Result_interpretation.c:332:7:PCR_GetBaselineMean	16	static
+../Core/Src/Result_interpretation.c:338:7:PCR_GetThreshold	16	static
+../Core/Src/Result_interpretation.c:344:6:PCR_AllDone	16	static
+../Core/Src/Result_interpretation.c:353:6:Positive_led_indicate	8	static
+../Core/Src/Result_interpretation.c:359:6:Negative_led_indicate	8	static
+../Core/Src/Result_interpretation.c:365:6:Invalid_led_indicate	8	static

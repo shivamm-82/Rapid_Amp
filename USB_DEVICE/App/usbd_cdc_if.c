@@ -31,7 +31,7 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
+extern void send_usb_string(const char* str);
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -261,8 +261,12 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
 	 memcpy(USB_RxBuffer, Buf, *Len);
-
-	 if(strcmp((char*)USB_RxBuffer,"{0x04}") == 0)
+     if(strcmp((char*)USB_RxBuffer,"{0x00}") == 0)
+     {
+    	// send_usb_string("{0x00}\n"); //device id
+         send_usb_string("[Natsight RapidAmp,11112223]\n");
+     }
+	 else if(strcmp((char*)USB_RxBuffer,"{0x04}") == 0)
 	 {
 		 START_COMMAND_FROM_PC = 1;
 	 }

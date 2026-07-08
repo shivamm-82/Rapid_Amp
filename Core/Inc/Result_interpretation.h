@@ -83,7 +83,7 @@ void PCR_Init(POSITION *well_ptrs[NUM_CHANNELS]);
  *         Automatically calls PCR_FinalResults() at minute 30.
  * @param  minute  Current reading index (0-based, i.e. minute 0..29)
  */
-void PCR_OnMinuteTick(uint8_t minute);
+void PCR_OnMinuteTick(volatile uint8_t minute);
 
 /**
  * @brief  Force final result calculation on all wells.

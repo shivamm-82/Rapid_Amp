@@ -30,7 +30,9 @@
 #include "Basic_functions_1.h"
 #include "Result_interpretation.h"
 #include <math.h>
+#include <stdio.h>
 #include "usbd_cdc_if.h"
+#include "ssd1306_1.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,13 +44,17 @@
 /* USER CODE BEGIN PD */
 volatile uint16_t ADC_VAL_DMA[2]={0},ADC_Average_result[2]={0};
 volatile uint32_t ADC_VAL=0,count_button=0,TIM4_count=0,LID_Count=0,Second_count_in_Timer=0,minute_counter_in_Timer=0;
-volatile uint8_t PRE_HEAT_FLAG=0,Count_Excite_LED_position=0,START_Reading_Switch=0,Data_Aquisition_flag_photo=0,Minutes_is_less_30_minutes=0,BUZZER_FLAG=0,SOMETHING_DETECTED=0,GET_USB_Status=0;
+volatile uint8_t PRE_HEAT_FLAG=0,Count_Excite_LED_position=0,START_Reading_Switch=0,Data_Aquisition_flag_photo=0,Minutes_is_less_30_minutes=0,BUZZER_FLAG=0,SOMETHING_DETECTED=0,GET_USB_Status=0,RESULT_DETECTED=1;
 float Current_Temp=0.0f,Set_Target_Temp=62.0f;
 volatile uint32_t three_sec_count=0;
 
+//Display Contnet Variable control
+static uint8_t Time_2_min = 60,Count_sec = 0;
+volatile uint8_t min_tim = 2;
 //BLE
 volatile   uint8_t DATA_RECIEVED = 0; //for ble data reciving
-uint8_t local_buff_BLE[10] = {0};
+uint8_t local_buff_BLE[50] = {0};
+uint8_t Data_ACK_FLAG = 0;
 //BLE variables
 #define RX_BLE_BUFF 1
 uint8_t RX_buff[RX_BLE_BUFF];
@@ -76,6 +82,8 @@ typedef enum
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
+I2C_HandleTypeDef hi2c1;
+
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
@@ -97,6 +105,7 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 void Preheat_loop(void);
 TEMP_StatusTypeDef check_Temprature_sensor_available(uint32_t ADC_VAL);
@@ -112,7 +121,8 @@ void send_usb_string(const char* str);
 void send_BLE_using_USART3_string(const char* str);
 void Excite_Aquisition_and_calculate_Result(POSITION *well_ptrs[NUM_CHANNELS]);
 void Device_ready_Tone(void);
-
+void Send_timer_to_display_Preheat_time(void);
+void Send_timer_to_display_Test_time(void);
 Moving_average Average_TEMP={0},Average_Photo_D={0};
 
 /* USER CODE END PFP */
@@ -160,10 +170,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 /*******************average of TEMP DATA DATA END **********************************/
 }
 
-
+//Timer will fire Every 50ms
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
-
   /****************************Preheating 1 sec counter & MINUTE COUNTER Start *****************************************************/
 	if(START_Reading_Switch){minute_counter_in_Timer++;}
 	Second_count_in_Timer++;
@@ -172,11 +181,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 		 //Pre Heat LED indicate every 1 sec toggle
 		 HAL_GPIO_TogglePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin);
 		 Second_count_in_Timer = 0;
+
 	 }
-	 else if((Second_count_in_Timer >=20) && PRE_HEAT_FLAG == 0)
+	 else if((Second_count_in_Timer >=20) && PRE_HEAT_FLAG == 0 && START_Reading_Switch)
 	 	 {
 	 	//on going  TEST LED indicate every 1 Sec toggle
-		 if(!SOMETHING_DETECTED){HAL_GPIO_TogglePin(RB_LED_BLUE_GPIO_Port, RB_LED_BLUE_Pin);}   //THIS IS USED WHEN TEST IS COMPLETED TO STOP BLINKING BLUE LED REFER RESULT_INTERPRETATION.C
+		 if(!SOMETHING_DETECTED){
+			 //update Display Every second
+			 Send_timer_to_display_Test_time();
+			 HAL_GPIO_TogglePin(RB_LED_BLUE_GPIO_Port, RB_LED_BLUE_Pin);}   //THIS IS USED WHEN TEST IS COMPLETED TO STOP BLINKING BLUE LED REFER RESULT_INTERPRETATION.C
+
+
+
+
 
 	 		 //buzzer off
 	 		  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
@@ -258,7 +275,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 	   	    	 {
 	   	    		 STOP_COMMAND_FROM_PC = 0;
 	   	    		 send_usb_string("{0x70,0x05}\n"); //ack stop
-	   	    		 Error_Handler();
+	   	    		// Error_Handler();
+
+	   	    		 //when user abort test from otherside then by raising this flag we are able to reset controller
+	   	    		RESULT_DETECTED = 0;
+	   	    		SOMETHING_DETECTED = 1; //to stop blinking of Blue LED
+	   	    		Invalid_led_indicate();
 	   	    	 }
 
    /*********************************USB FLAG CONNECTED DISCONNED RESPOND HERE END***********************************************/
@@ -277,83 +299,53 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   		{
   			store_data_in_buffer = 1;
   		}
-  		else if((RX_buff[0] == 0x7D) && store_data_in_buffer == 1)  // {
+  		else if((RX_buff[0] == 0x7D) && store_data_in_buffer == 1)  // }
   		{
   			store_data_in_buffer = 0;
   			local_buff_BLE[count_recieved_packets++] = RX_buff[0];
   			 if(strcmp((char*)local_buff_BLE,"{0x04}") == 0)  //start command
   			        	 {
-  			        		send_BLE_using_USART3_string("{0x70,0x04}\n"); //ack start
+  				            Data_ACK_FLAG = 1;
+  				          send_BLE_using_USART3_string("{0x70,0x04}\n"); //ack start
+  				          send_BLE_using_USART3_string("{0x06}\n");
   			        		 count_recieved_packets = 0;
   			        		START_Reading_Switch = 1;  //start from PC command
-  			        		memset(local_buff_BLE,0,10);
+  			        		memset(local_buff_BLE,0,50);
   			        	 }
   			        	 else if(strcmp((char*)local_buff_BLE,"{0x05}") == 0)
   			        	 {
   			        		 send_BLE_using_USART3_string("{0x70,0x05}\n"); //ack start
   			        		 count_recieved_packets = 0;
-  			        		 memset(local_buff_BLE,0,10);
-  			        		 Error_Handler();
+  			        		 memset(local_buff_BLE,0,50);
+  			        		// Error_Handler();
+
+  			        		 //when user abort test from otherside then by raising this flag we are able to reset controller
+  			        	     RESULT_DETECTED = 0;
+  			        	     SOMETHING_DETECTED = 1; //to stop blinking of Blue LED
+  			           		 Invalid_led_indicate();
+  			        	 }
+  			        	 else
+  			        	 {
+  			        	            	store_data_in_buffer = 0;
+  			        	  				count_recieved_packets = 0;
+  			        	  			    memset(local_buff_BLE,0,50);
   			        	 }
   		}
   		 if(store_data_in_buffer)
   		{
   			local_buff_BLE[count_recieved_packets++] = RX_buff[0];
+  			if(store_data_in_buffer > 48)
+  			{
+  				store_data_in_buffer = 0;
+  				count_recieved_packets = 0;
+  			    memset(local_buff_BLE,0,50);
+  			}
   		}
   		else if(strcmp((char*)RX_buff,"}") == 0 && store_data_in_buffer == 1)
   		{
   			store_data_in_buffer = 0;
   		}
 
-
-  		//different logic
-//         if(RX_buff[0] == 0x0A)    //new line
-//         {
-//        	 DATA_RECIEVED = 1;
-//        	 count_recieved_packets = 0; //reset index
-//         }
-//         else
-//         {
-//        	 local_buff_BLE[count_recieved_packets] = RX_buff[0];
-//        	 if(count_recieved_packets++ > 9)
-//        	 {
-//        		 memset(local_buff_BLE,0,10);
-//        		 count_recieved_packets = 0;
-//        	 }
-//
-//         }
-//
-//         if(DATA_RECIEVED)
-//         {
-//        	 DATA_RECIEVED = 0;
-//        	 if(strcmp((char*)local_buff_BLE,"{0x04}") == 0)  //start command
-//        	 {
-//        		send_BLE_using_USART3_string("{0x70,0x04}\n"); //ack start
-//        		 count_recieved_packets = 0;
-//        		START_Reading_Switch = 1;  //start from PC command
-//        		memset(local_buff_BLE,0,10);
-//        	 }
-//        	 else if(strcmp((char*)local_buff_BLE,"{0x05}") == 0)
-//        	 {
-//        		 send_BLE_using_USART3_string("{0x70,0x05}\n"); //ack start
-//        		 count_recieved_packets = 0;
-//        		 memset(local_buff_BLE,0,10);
-//        		 Error_Handler();
-//        	 }
-//         }
-
-
-
-//
-//            if(strcmp((char*)RX_buff,"{0x04}") == 0)
-//            {
-//            	send_BLE_using_USART3_string("{0x70,0x04}\n"); //ack start
-//            }
-//            else if(strcmp((char*)RX_buff,"{0x05}") == 0)
-//            {
-//            	send_BLE_using_USART3_string("{0x70,0x05}\n"); //ack start
-//            }
-//            memset(RX_buff,0,sizeof(RX_buff));
             HAL_UART_Receive_IT(&huart3,RX_buff,RX_BLE_BUFF);
   	}
 }
@@ -399,10 +391,21 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM4_Init();
   MX_USART3_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
+  if (SSD1306_Init(&hi2c1)!=0)
+  {
+	   Error_Handler();
+  }
 
+  SSD1306_Clear(SSD1306_BLACK);
 
+  SSD1306_DrawString(0, 0, "RapidAmp", SSD1306_WHITE, 1);
+  SSD1306_Update();
+
+  SSD1306_DrawString(0, 20, "By Meril", SSD1306_WHITE, 1);
+  SSD1306_Update();
 
   /***************************************************************************************
    *
@@ -428,16 +431,16 @@ int main(void)
 
   //buzzer off
   HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
-  HAL_Delay(2000);
+  HAL_Delay(200);
 
   //Turn off All Excitation LEDs
   Turn_off_All_LED();
 
   //Start DMA for ADC scanning
-  HAL_Delay(10);
+  HAL_Delay(100);
   HAL_ADCEx_Calibration_Start(&hadc1);  // ← add this
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_VAL_DMA, 2);
-  HAL_Delay(10);
+  HAL_Delay(100);
 
 
   //Toggle buzzer thrice indicates power on
@@ -446,6 +449,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  //Initialize pointer
   POSITION WELL_1={0},WELL_2={0},WELL_3={0},WELL_4={0},WELL_5={0},WELL_6={0},WELL_7={0};
   // Pointer array — no extra memory, just pointers to existing structs
   POSITION *wells[7] = {&WELL_1, &WELL_2, &WELL_3, &WELL_4,&WELL_5, &WELL_6, &WELL_7};
@@ -469,13 +474,13 @@ int main(void)
 
 
 
+ /*********************display initialization start*******************************/
+//   if (SSD1306_Init(&hi2c1)!=0)
+//   {
+//	   Error_Handler();
+//   }
 
-
-
-
-
-
-
+    // --- Draw something ---
 
 
 
@@ -520,53 +525,74 @@ int main(void)
    *
    * *************************************************************************************/
 
-  HAL_Delay(1000);
+
+  //Send Insert Cartridge String to BLE,PC
+
   send_usb_string("{0x03}\n"); //send Insert Cartridge and close Lid to PC
   send_BLE_using_USART3_string("{0x03}\n");  //send Insert Cartridge and close Lid BLE
-  HAL_Delay(1000);
+  HAL_Delay(50);
 
-
+  //Device Ready Tone
   Device_ready_Tone();
-  HAL_Delay(1000);
+  HAL_Delay(10);
 
 
-
+  //Turn On BLue LED for Readyness
   HAL_GPIO_WritePin(RB_LED_BLUE_GPIO_Port, RB_LED_BLUE_Pin, 0); //on
+
+  //wait here till any start command Received from any source
   while(!START_Reading_Switch)
   {
-	  HAL_Delay(100);
+	  HAL_Delay(10);
   }
   //blink On going test LED until it started from Any trigger source
-   SOMETHING_DETECTED = 0 ;
+  send_usb_string("{0x06}\n");  //send test running at first when it start command recieved from pc or BLE or device button press
+  send_BLE_using_USART3_string("{0x06}\n");  //send test running at first when it start command recieved from pc or BLE or device button press
+
+  SOMETHING_DETECTED = 0 ;
+
+  SSD1306_Clear(SSD1306_BLACK);
+  SSD1306_DrawString(0, 0, "Test      Started", SSD1306_WHITE, 1);
+  SSD1306_Update();
+
+ // SSD1306_Clear(SSD1306_BLACK);
+  SSD1306_DrawString(0, 30, "Time ", SSD1306_WHITE, 1);
+  SSD1306_Update();
+
+  SSD1306_DrawString(0, 50, "Remaining ", SSD1306_WHITE, 1);
+  SSD1306_Update();
+
 
   while (1)
   {
-
+	     //Once Start Command Received from any source from Switch,PC,BLE This will Start Executing
 	     while(START_Reading_Switch)
 	     {
-
-	    	 if(BUZZER_FLAG)
+            //Once Start command Received This Loop will Run once for to transmit data to BLE and PC
+	    	 if(Data_ACK_FLAG)
 	    	 {
-	    		 send_usb_string("{0x06}\n");  //send test running at first when it start command recieved from pc or BLE or device button press
-	    		 send_BLE_using_USART3_string("{0x06}\n");  //send test running at first when it start command recieved from pc or BLE or device button press
-	    		 HAL_Delay(500);
+	    		 for(uint8_t i=0;i<5;i++){
+	    		 send_BLE_using_USART3_string("{0x70,0x04}\n"); //ack start
+	    		 HAL_Delay(10);
+	    		 send_BLE_using_USART3_string("{0x06}\n");
+	    		 Data_ACK_FLAG = 0;
+	    		 HAL_Delay(10);
+	    		 }
 	    	 }
-	     //tEST Running};
-		  if(minute_counter_in_Timer >= 1220 && Minutes_is_less_30_minutes < 30)  //every 1 min it will execute
+	       //Test Running Till Result Anounneced
+		  if(minute_counter_in_Timer >= 1220 && Minutes_is_less_30_minutes < 30 && RESULT_DETECTED)  //every 1 min it will execute
 		  {
 			  send_usb_string("{0x06}\n"); //tEST Running send every minute to pC
 			  send_BLE_using_USART3_string("{0x06}\n"); //tEST Running send every minute to BLE
 			  Excite_Aquisition_and_calculate_Result(wells);
 		  }
 
-		  //
-
-
+		   //when Result is completed then this loop will run once switch is pressed this will work Reset will be performed
+		  else if(!RESULT_DETECTED && BUZZER_FLAG)
+		  {
+			  __NVIC_SystemReset();
+		  }
 	     }
-
-
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -674,6 +700,40 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
@@ -1090,16 +1150,17 @@ void Device_ready_Tone(void)
 void Buzzer_power_on_tone(void)
 {
 	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 1);  //off
-	  HAL_Delay(2000);
+	  HAL_Delay(100);
 	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
-	  HAL_Delay(2000);
-//	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 1);  //off
-//	  HAL_Delay(500);
-//	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
-//	  HAL_Delay(500);
-//	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 1);  //off
-//	  HAL_Delay(500);
-//	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
+	  HAL_Delay(100);
+	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 1);  //off
+	  HAL_Delay(100);
+	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
+	  HAL_Delay(100);
+	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 1);  //off
+	  HAL_Delay(100);
+	  HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, 0);  //off
+	  HAL_Delay(100);
 }
 
 void Buzzer_Test_Complete_tone(void)
@@ -1193,6 +1254,101 @@ TEMP_StatusTypeDef check_Temprature_sensor_available(uint32_t ADC_VAL)
 
 }
 
+void Send_timer_to_display_Preheat_time(void)
+{
+	  //send 3 min timer to display
+static uint8_t min = 2;
+
+				       if((HAL_GetTick() - three_sec_count) > 1000){
+
+				        			    	   Count_sec++;
+
+
+				        			    	 if(Count_sec < 181 && Time_2_min !=0)
+				        			    	 {
+				        			    		 Time_2_min--;
+				        			    		 if(Time_2_min == 0 && min !=0)
+				        			    		 {
+				        			    			 min = min - 1;
+				        			    		 	 Time_2_min = 60;
+				        			    	      }
+
+				        			    	 if(Time_2_min < 10)
+				        			    	 {
+				        			    	 char buff[20];
+				        			    	 sprintf(buff,"Time=%d:0%d",min,Time_2_min);
+				        			    	 SSD1306_DrawString(0, 50, buff, SSD1306_WHITE, 1);
+				        			         SSD1306_Update();
+				        			    	 }
+				        			    	 else
+				        			    	 {
+				        			    	 char buff[20];
+				        			    	 sprintf(buff,"Time=%d:%d",min,Time_2_min);
+				        			    	 SSD1306_DrawString(0, 50, buff, SSD1306_WHITE, 1);
+				        			    	 SSD1306_Update();
+				        			    	 }
+
+				        			         three_sec_count = HAL_GetTick(); // Reset timer
+				        			    	 }
+
+				        			       }
+
+
+}
+
+
+void Send_timer_to_display_Test_time(void)
+{
+	  //send 3 min timer to display
+static uint8_t min = 29;
+
+
+
+
+				        			    	 if(Time_2_min !=0)
+				        			    	 {
+				        			    		 Time_2_min--;
+				        			    		 if(Time_2_min == 0 && min !=0)
+				        			    		 {
+				        			    			 min = min - 1;
+				        			    		 	 Time_2_min = 60;
+				        			    	     }
+
+				        			    	 if(Time_2_min < 10)
+				        			    	 {
+				        			    	 char buff[20];
+				        			    	 if(min < 10){
+				        			    	 sprintf(buff,"0%d:0%d",min,Time_2_min);
+				        			    	 }
+				        			    	 else
+				        			    	 {
+				        			    	 sprintf(buff,"%d:0%d",min,Time_2_min);
+				        			    	 }
+				        			    	 SSD1306_DrawString(0, 80, buff, SSD1306_WHITE, 2);
+				        			         SSD1306_Update();
+
+				        			    	 }
+				        			    	 else
+				        			    	 {
+				        			    	 char buff[20];
+				        			    	 if(min < 10){
+				        			    	 sprintf(buff,"0%d:%d",min,Time_2_min);}
+				        			    	 else
+				        			    	 {
+				        			         sprintf(buff,"%d:%d",min,Time_2_min);
+				        			    	 }
+				        			    	 SSD1306_DrawString(0, 80, buff, SSD1306_WHITE, 2);
+				        			    	 SSD1306_Update();
+				        			    	 }
+
+
+				        			       }
+
+
+}
+
+
+
 void Preheat_loop(void)
 {
 	PIDController Heater_Power;
@@ -1201,9 +1357,9 @@ void Preheat_loop(void)
    #define PREHEAT_STABLE_COUNTS 5         // must hold temp for N consecutive ticks
    #define PREHEAT_TARGET_DEGC  59.0f
 	//send device id and name to PC
-	 send_usb_string("{0x00}\n"); //device id
+	// send_usb_string("{0x00}\n"); //device id
 	 HAL_Delay(20);
-	 send_usb_string("[0x00,11112222,Natsight RapidAmp]\n");
+	// send_usb_string("[Natsight RapidAmp,11112223]\n");
 	 HAL_Delay(20);
 
 	 //send device id and name to BLE
@@ -1213,6 +1369,16 @@ void Preheat_loop(void)
 	 HAL_Delay(20);
 
 
+	 //write preheating on display
+	  SSD1306_Clear(SSD1306_BLACK);
+	  SSD1306_DrawString(0, 0, "Device", SSD1306_WHITE, 1);
+	  SSD1306_Update();
+
+	  SSD1306_DrawString(0, 20, "Preheating", SSD1306_WHITE, 1);
+	  SSD1306_Update();
+
+	  SSD1306_DrawString(0, 30, "..........", SSD1306_WHITE, 1);
+	  SSD1306_Update();
 	//Set pre_heat flag
 	PRE_HEAT_FLAG = 1;
     three_sec_count = HAL_GetTick();
@@ -1261,6 +1427,8 @@ void Preheat_loop(void)
 			       three_sec_count = HAL_GetTick(); // Reset timer
 			       }
 
+			       Send_timer_to_display_Preheat_time(); //3 min
+
 
 	}while(Count_N_times_target_temp < PREHEAT_STABLE_COUNTS);
 
@@ -1279,6 +1447,26 @@ void Preheat_loop(void)
 	 send_usb_string("{0x02}\n"); //Ready to PC
 	 send_BLE_using_USART3_string("{0x02}\n"); //Ready to BLE
 	 HAL_Delay(20);
+
+	 //write Ready  on display
+		  SSD1306_Clear(SSD1306_BLACK);
+		  SSD1306_DrawString(0, 0, "Device", SSD1306_WHITE, 1);
+		  SSD1306_Update();
+
+		  SSD1306_DrawString(0, 20, "Ready", SSD1306_WHITE, 1);
+		  SSD1306_Update();
+
+		  SSD1306_DrawString(0, 30, "---------", SSD1306_WHITE, 1);
+		  SSD1306_Update();
+
+		  SSD1306_DrawString(0, 40, "Waiting to", SSD1306_WHITE, 1);
+		  SSD1306_Update();
+
+		  SSD1306_DrawString(0, 60, "Start test", SSD1306_WHITE, 1);
+		  SSD1306_Update();
+
+		  SSD1306_DrawString(0, 80, "by user", SSD1306_WHITE, 1);
+		  SSD1306_Update();
 }
 /* USER CODE END 4 */
 

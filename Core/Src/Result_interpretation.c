@@ -24,10 +24,11 @@
  */
 
 #include <string.h>   /* memset */
+#include "ssd1306_1.h"
 
 #include "main.h"
 
-extern uint8_t SOMETHING_DETECTED;
+extern volatile uint8_t SOMETHING_DETECTED,RESULT_DETECTED;
 extern void Buzzer_Test_Complete_tone(void);    //from main.c
 extern void send_usb_string(const char* str);  //from main.c
 extern void send_BLE_using_USART3_string(const char* str); //from main.c
@@ -74,6 +75,11 @@ FINAL_RESULT PCR_GetFinalRunResult(void)
         }
     }
 
+
+    SSD1306_Clear(SSD1306_BLACK);
+    SSD1306_DrawString(0, 0, "Result", SSD1306_WHITE, 1);
+    SSD1306_Update();
+
     /* ── Decision tree ── */
     if (any_positive)
     {
@@ -81,6 +87,10 @@ FINAL_RESULT PCR_GetFinalRunResult(void)
     	if(ic_passed){
         final.overall = FINAL_DETECTED;
         Positive_led_indicate();
+
+        //send to Display
+         SSD1306_DrawString(0, 20, "Positive", SSD1306_WHITE, 1);
+         SSD1306_Update();
 
         //send to PC
         send_usb_string("{0x07}\n"); //positive
@@ -103,6 +113,10 @@ FINAL_RESULT PCR_GetFinalRunResult(void)
         /* IC failed + no positives = reaction failure */
         final.overall = FINAL_INVALID;
         Invalid_led_indicate();
+
+        //send to Display
+         SSD1306_DrawString(0, 20, "Invalid", SSD1306_WHITE, 1);
+         SSD1306_Update();
 
         //send to PC
         send_usb_string("{0x09}\n"); //invalid
@@ -131,6 +145,9 @@ FINAL_RESULT PCR_GetFinalRunResult(void)
         final.overall = FINAL_NOT_DETECTED;
         Negative_led_indicate();
 
+        //send to Display
+         SSD1306_DrawString(0, 20, "Negative", SSD1306_WHITE, 1);
+         SSD1306_Update();
         //send to PC
         send_usb_string("{0x08}\n"); //valid ic
         HAL_Delay(20);
@@ -260,7 +277,7 @@ void PCR_Init(POSITION *well_ptrs[NUM_CHANNELS])
     s_baseline_locked = false;
 }
 
-void PCR_OnMinuteTick(uint8_t minute)
+void PCR_OnMinuteTick(volatile uint8_t minute)
 {
     /* Not enough baseline points yet */
     if (minute < BASELINE_POINTS)
@@ -295,6 +312,7 @@ void PCR_OnMinuteTick(uint8_t minute)
         PCR_FinalResults();
         SOMETHING_DETECTED = 1;  //this for when 29 cycles is completed to STOP bLUE LED WHICH IS TOGLLING EVERY SECOND
         PCR_GetFinalRunResult();
+        RESULT_DETECTED = 0; //loop will never execute while this flag is cleared
     }
 }
 
@@ -353,20 +371,20 @@ bool PCR_AllDone(void)
 
 void Positive_led_indicate(void)
 {
-	  HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //off
-	  HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, 0);  //off
+	  HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //on
+	  HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, 0);  //on
 }
 
 void Negative_led_indicate(void)
 {
-	 HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //off
-	 HAL_GPIO_WritePin(Green_LED_GPIO_Port, Green_LED_Pin, 0);  //off
+	 HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //on
+	 HAL_GPIO_WritePin(Green_LED_GPIO_Port, Green_LED_Pin, 0);  //on
 }
 
 void Invalid_led_indicate(void)
 {
 	 HAL_GPIO_WritePin(RB_LED_BLUE_GPIO_Port, RB_LED_BLUE_Pin, 1); //off
-	 HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //off
-     HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, 0);  //off
-     HAL_GPIO_WritePin(Green_LED_GPIO_Port, Green_LED_Pin, 0);  //off
+	 HAL_GPIO_WritePin(RB__LED_RED_GPIO_Port, RB__LED_RED_Pin, 0); //on
+     HAL_GPIO_WritePin(RED_LED_GPIO_Port, RED_LED_Pin, 0);  //on
+     HAL_GPIO_WritePin(Green_LED_GPIO_Port, Green_LED_Pin, 0);  //on
 }
